@@ -1,0 +1,10 @@
+# Slideshow: decisions
+<!-- SUMMARY: decision log for the zero-footprint browser slideshow · status: working, tested in Chrome only · updated: 2026-10-30 -->
+
+2026-10-30 — One self-contained HTML file that holds images as in-memory object URLs: no server, no dependencies, no network, no file writes. Only the settings go to localStorage. Reason: Brett asked for an app that makes no copies or other files needing cleanup; a page holding references to the original files meets that exactly.
+
+2026-10-30 — The image sequence isn't saved. Reason: saving it means writing state somewhere. Chrome's File System Access API is the follow-up if a sequence ever needs to survive a reload.
+
+2026-10-30 — Code written by qwen3.8:27b (local, Ollama 0.40.7, thinking off, temperature 0.2), because Brett asked for a local subagent. Round 1 built the app from `dev/brief-1-build.md` (9,928 tokens, 14 min). Round 2 rewrote the script against 16 defects found by reading round 1 (`dev/brief-2-repair.md`; 6,855 tokens, 11 min). Owner: Brett; coding: qwen; review, testing and fixes: Claude Opus 5.5.
+
+2026-10-30 — Claude fixed six things after round 2 instead of running a third qwen round. Reason: each fix was a line or two, and a third round would have been another 11-minute rewrite of the whole script. Fixes: (1) `transition()` read which layer was front and which back before finishing the transition in flight, which swaps them, so pressing an arrow mid-transition would have loaded the new image into the visible layer; (2) the first slide now goes through `decode()` and is skipped if it can't be shown; (3) when an undecodable image is the last one, the show wraps to the start if looping instead of stepping back; (4) files from the pickers are added in natural name order, like dropped files; (5) ← at "End" steps back instead of reloading the last image; (6) UI copy: em-dashes removed, and "nothing saved" changed because the settings are saved.

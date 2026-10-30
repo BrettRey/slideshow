@@ -1,0 +1,1008 @@
+<!doctype html>
+<!-- NOTES: HEIC/HEIF decode is browser-dependent (Chrome shows the red "can't display" tile, Safari may render it); Safari fullscreen uses the webkitRequestFullscreen/webkitfullscreenchange fallback; the Ken Burns idle animation is not applied to the very first slide (it starts on the first transition); the HUD "End" state is shown only when the show is paused at the last image. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Slideshow</title>
+<style>
+  :root{
+    --bg:#0d0e11; --panel:#15171c; --panel2:#1b1e24; --line:#2a2e36;
+    --text:#e8eaf0; --muted:#9aa1ad; --accent:#4cc9f0; --accent-ink:#04121a;
+    --danger:#ff5d5d; --ok:#57d98a; --radius:12px;
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; background:var(--bg); color:var(--text); font-family:var(--font);
+    line-height:1.45; -webkit-font-smoothing:antialiased;
+  }
+  body.dragging{cursor:copy}
+  button{font-family:inherit}
+  ::selection{background:rgba(76,201,240,.3)}
+
+  /* ---------- toolbar ---------- */
+  .toolbar{
+    position:sticky; top:0; z-index:20;
+    background:linear-gradient(180deg,#14161b,#101216);
+    border-bottom:1px solid var(--line);
+    padding:14px 18px;
+    display:flex; flex-wrap:wrap; gap:14px 22px; align-items:flex-end;
+  }
+  .brand{display:flex; flex-direction:column; gap:2px; margin-right:6px}
+  .brand h1{font-size:19px; margin:0; letter-spacing:.2px}
+  .brand .sub{font-size:12px; color:var(--muted)}
+  .group{display:flex; flex-direction:column; gap:6px}
+  .group > .lbl{font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted)}
+  .row{display:flex; align-items:center; gap:8px; flex-wrap:wrap}
+
+  .btn{
+    appearance:none; border:1px solid var(--line); background:var(--panel2); color:var(--text);
+    padding:8px 12px; border-radius:9px; font-size:13.5px; cursor:pointer;
+    transition:background .15s, border-color .15s, transform .05s;
+  }
+  .btn:hover{background:#232730; border-color:#3a404c}
+  .btn:active{transform:translateY(1px)}
+  .btn.danger:hover{border-color:var(--danger); color:#ffd7d7}
+  .btn.play{
+    background:var(--accent); color:var(--accent-ink); border-color:transparent;
+    font-weight:700; font-size:15px; padding:10px 20px;
+  }
+  .btn.play:hover{background:#63d4f4}
+  .btn:disabled{opacity:.4; cursor:not-allowed}
+
+  input[type=range]{accent-color:var(--accent); width:120px}
+  input[type=number]{
+    width:64px; background:var(--panel2); border:1px solid var(--line); color:var(--text);
+    border-radius:8px; padding:6px 8px; font-family:inherit; font-size:13px;
+  }
+  select{
+    background:var(--panel2); border:1px solid var(--line); color:var(--text);
+    border-radius:8px; padding:7px 8px; font-family:inherit; font-size:13px;
+  }
+  .chk{display:flex; align-items:center; gap:7px; font-size:13.5px; cursor:pointer; user-select:none}
+  .chk input{accent-color:var(--accent); width:16px; height:16px}
+  .unit{color:var(--muted); font-size:12px}
+
+  /* ---------- status ---------- */
+  .status{
+    padding:10px 18px; font-size:13px; color:var(--muted);
+    border-bottom:1px solid var(--line); min-height:1px;
+  }
+  .status .ok{color:var(--ok)} .status .warn{color:var(--danger)}
+
+  /* ---------- grid ---------- */
+  main{padding:18px}
+  .grid{
+    display:grid; grid-template-columns:repeat(auto-fill, minmax(140px,1fr)); gap:14px;
+  }
+  .tile{
+    position:relative; background:var(--panel); border:1px solid var(--line);
+    border-radius:var(--radius); overflow:hidden; cursor:grab;
+    transition:border-color .15s, box-shadow .15s, transform .05s;
+  }
+  .tile:hover{border-color:#3a404c}
+  .tile.dragging{opacity:.4}
+  .tile.drop-before{box-shadow:inset 3px 0 0 var(--accent)}
+  .tile.drop-after{box-shadow:inset -3px 0 0 var(--accent)}
+  .tile .thumb{
+    width:100%; aspect-ratio:1/1; object-fit:cover; display:block; background:#000;
+  }
+  .tile .num{
+    position:absolute; top:6px; left:6px; background:rgba(0,0,0,.6);
+    font-size:11px; padding:2px 7px; border-radius:20px; color:#fff;
+  }
+  .tile .name{
+    position:absolute; left:0; right:0; bottom:0; padding:6px 8px;
+    background:linear-gradient(0deg,rgba(0,0,0,.85),rgba(0,0,0,0));
+    font-size:11.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .tile .rm{
+    position:absolute; top:6px; right:6px; width:24px; height:24px; border-radius:50%;
+    border:none; background:rgba(0,0,0,.6); color:#fff; cursor:pointer; font-size:13px;
+    display:flex; align-items:center; justify-content:center; opacity:0; transition:opacity .15s;
+  }
+  .tile:hover .rm{opacity:1}
+  .tile .rm:hover{background:var(--danger)}
+  .tile.broken{border-color:var(--danger); box-shadow:0 0 0 1px var(--danger)}
+  .tile.broken .thumb{display:none}
+  .tile .broken-note{
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    text-align:center; padding:10px; font-size:11.5px; color:var(--danger); background:#1a1012;
+  }
+
+  /* ---------- empty state ---------- */
+  .empty{
+    border:2px dashed var(--line); border-radius:16px; padding:60px 24px; text-align:center;
+    color:var(--muted);
+  }
+  .empty .big{font-size:44px; margin-bottom:10px}
+  .empty h2{color:var(--text); margin:0 0 8px; font-size:20px}
+  .empty p{margin:0 auto; max-width:440px}
+
+  /* ---------- drop overlay ---------- */
+  .drop-overlay{
+    position:fixed; inset:0; z-index:100; display:none; align-items:center; justify-content:center;
+    background:rgba(8,10,14,.82); backdrop-filter:blur(2px);
+    border:3px dashed var(--accent); margin:12px; border-radius:18px;
+  }
+  .drop-overlay.show{display:flex}
+  .drop-overlay .inner{text-align:center; color:var(--text)}
+  .drop-overlay .big{font-size:52px; margin-bottom:12px}
+  .drop-overlay h3{margin:0; font-size:22px}
+
+  /* ---------- stage ---------- */
+  .stage{
+    position:fixed; inset:0; z-index:200; background:#000; display:none; overflow:hidden;
+  }
+  .stage.show{display:block}
+  .stage .layer{
+    position:absolute; inset:0; width:100%; height:100%;
+    object-fit:contain; background:#000; will-change:transform,opacity;
+  }
+  .stage .layer.cover{object-fit:cover}
+  .stage .caption{
+    position:absolute; left:20px; bottom:20px; z-index:5;
+    font-size:14px; color:#fff; background:rgba(0,0,0,.5); padding:6px 12px; border-radius:8px;
+    max-width:70vw; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .stage .hud{
+    position:absolute; left:0; right:0; bottom:0; z-index:6;
+    display:flex; align-items:center; gap:16px; padding:14px 20px;
+    background:linear-gradient(0deg,rgba(0,0,0,.7),rgba(0,0,0,0));
+    opacity:0; transition:opacity .3s; pointer-events:none;
+  }
+  .stage .hud.show{opacity:1}
+  .stage .hud .pos{font-size:15px; font-variant-numeric:tabular-nums}
+  .stage .hud .fn{font-size:13px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1}
+  .stage .hud .state{font-size:13px; color:var(--accent); font-weight:600}
+  .stage.hide-cursor{cursor:none}
+
+  @media (max-width:640px){
+    .toolbar{gap:12px 16px}
+    .brand{width:100%}
+  }
+</style>
+</head>
+<body>
+
+  <div class="toolbar">
+    <div class="brand">
+      <h1>Slideshow</h1>
+      <span class="sub">local only · nothing saved</span>
+    </div>
+
+    <div class="group">
+      <span class="lbl">Images</span>
+      <div class="row">
+        <button class="btn" id="addBtn">Add images</button>
+        <button class="btn" id="addFolderBtn">Add folder</button>
+        <button class="btn danger" id="clearBtn">Clear all</button>
+      </div>
+    </div>
+
+    <div class="group">
+      <span class="lbl">Sort</span>
+      <div class="row">
+        <button class="btn" data-sort="name">Name</button>
+        <button class="btn" data-sort="date">Date</button>
+        <button class="btn" data-sort="shuffle">Shuffle</button>
+        <button class="btn" data-sort="reverse">Reverse</button>
+      </div>
+    </div>
+
+    <div class="group">
+      <span class="lbl">Slide duration</span>
+      <div class="row">
+        <input type="range" id="durRange" min="1" max="60" step="0.5" value="5">
+        <input type="number" id="durNum" min="1" max="60" step="0.5" value="5">
+        <span class="unit">s</span>
+      </div>
+    </div>
+
+    <div class="group">
+      <span class="lbl">Transition</span>
+      <div class="row">
+        <select id="transSel">
+          <option value="cut">Cut</option>
+          <option value="crossfade" selected>Crossfade</option>
+          <option value="slide">Slide</option>
+          <option value="zoom">Zoom</option>
+          <option value="kenburns">Ken Burns</option>
+          <option value="random">Random</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="group">
+      <span class="lbl">Transition duration</span>
+      <div class="row">
+        <input type="range" id="tdurRange" min="0.2" max="5" step="0.1" value="1">
+        <input type="number" id="tdurNum" min="0.2" max="5" step="0.1" value="1">
+        <span class="unit">s</span>
+      </div>
+    </div>
+
+    <div class="group">
+      <span class="lbl">Fit</span>
+      <div class="row">
+        <select id="fitSel">
+          <option value="contain" selected>Contain</option>
+          <option value="cover">Cover</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="group">
+      <span class="lbl">Options</span>
+      <div class="row">
+        <label class="chk"><input type="checkbox" id="loopChk" checked> Loop</label>
+        <label class="chk"><input type="checkbox" id="capChk"> Filename caption</label>
+      </div>
+    </div>
+
+    <div class="group">
+      <span class="lbl">&nbsp;</span>
+      <div class="row">
+        <button class="btn play" id="playBtn" disabled>▶ Play</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="status" id="status">Drop images or folders anywhere, or use the buttons above.</div>
+
+  <main>
+    <div class="grid" id="grid"></div>
+    <div class="empty" id="empty">
+      <div class="big">🖼️</div>
+      <h2>No images yet</h2>
+      <p>Drag a pile of images — or a whole folder — anywhere in this window to build your sequence.
+         Everything stays in your browser; nothing is uploaded, copied, or saved.</p>
+    </div>
+  </main>
+
+  <!-- drop overlay -->
+  <div class="drop-overlay" id="dropOverlay">
+    <div class="inner">
+      <div class="big">⤵</div>
+      <h3>Drop images or folders</h3>
+    </div>
+  </div>
+
+  <!-- stage -->
+  <div class="stage" id="stage">
+    <img class="layer" id="layerA" alt="">
+    <img class="layer" id="layerB" alt="">
+    <div class="caption" id="caption" hidden></div>
+    <div class="hud" id="hud">
+      <span class="pos" id="hudPos"></span>
+      <span class="fn" id="hudFn"></span>
+      <span class="state" id="hudState"></span>
+    </div>
+  </div>
+
+  <!-- hidden file inputs -->
+  <input type="file" id="fileInput" accept="image/*,.heic,.heif" multiple hidden>
+  <input type="file" id="folderInput" webkitdirectory multiple hidden>
+
+<script>
+"use strict";
+// NOTES: none
+(() => {
+  // ---------------------------------------------------------------------------
+  // Settings (the ONLY thing persisted, and only if storage is allowed)
+  // ---------------------------------------------------------------------------
+  const DEFAULTS = { duration:5, transition:'crossfade', tdur:1, fit:'contain', loop:true, caption:false };
+  const SETTINGS_KEY = 'slideshow.settings.v1';
+  let settings = { ...DEFAULTS };
+
+  function loadSettings(){
+    try{
+      const raw = localStorage.getItem(SETTINGS_KEY);
+      if(raw){
+        const p = JSON.parse(raw);
+        for(const k in DEFAULTS) if(k in p) settings[k] = p[k];
+      }
+    }catch(e){ /* storage blocked — fall back to defaults */ }
+  }
+  function saveSettings(){
+    try{ localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); }catch(e){ /* ignore */ }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Image list (in-memory only)
+  // ---------------------------------------------------------------------------
+  const EXT = new Set(['jpg','jpeg','png','gif','webp','avif','bmp','svg','heic','heif','tif','tiff']);
+  const images = [];   // {id, file, url, name, path, broken}
+  let idSeq = 0;
+
+  const extOf = (n) => { const i = n.lastIndexOf('.'); return i < 0 ? '' : n.slice(i+1).toLowerCase(); };
+  const isImageFile = (f) => (f.type && f.type.startsWith('image/')) || EXT.has(extOf(f.name));
+  const keyOf = (f) => f.name + '|' + f.size + '|' + f.lastModified;
+  const seen = new Set();
+
+  const natural = (a,b) => a.localeCompare(b, undefined, {numeric:true, sensitivity:'base'});
+
+  function addFile(file, path){
+    if(!isImageFile(file)) return false;
+    const k = keyOf(file);
+    if(seen.has(k)) return false;
+    seen.add(k);
+    const url = URL.createObjectURL(file);
+    images.push({ id:++idSeq, file, url, name:file.name, path:path || file.webkitRelativePath || file.name, broken:false });
+    return true;
+  }
+
+  function removeImage(id){
+    const i = images.findIndex(x => x.id === id);
+    if(i < 0) return;
+    URL.revokeObjectURL(images[i].url);
+    seen.delete(keyOf(images[i].file));
+    images.splice(i,1);
+  }
+
+  function clearAll(){
+    for(const im of images) URL.revokeObjectURL(im.url);
+    images.length = 0;
+    seen.clear();
+  }
+
+  // ---------------------------------------------------------------------------
+  // DOM references
+  // ---------------------------------------------------------------------------
+  const $ = (s) => document.querySelector(s);
+  const grid = $('#grid'), empty = $('#empty'), statusEl = $('#status');
+  const stage = $('#stage'), layerA = $('#layerA'), layerB = $('#layerB');
+  const caption = $('#caption'), hud = $('#hud'), hudPos = $('#hudPos'), hudFn = $('#hudFn'), hudState = $('#hudState');
+  const dropOverlay = $('#dropOverlay');
+  const playBtn = $('#playBtn');
+
+  // ---------------------------------------------------------------------------
+  // Status line
+  // ---------------------------------------------------------------------------
+  let statusTimer = null;
+  function setStatus(html, sticky){
+    statusEl.innerHTML = html;
+    clearTimeout(statusTimer);
+    if(!sticky) statusTimer = setTimeout(() => {
+      statusEl.innerHTML = defaultStatus();
+    }, 6000);
+  }
+  function defaultStatus(){
+    const n = images.length;
+    if(n === 0) return 'Drop images or folders anywhere, or use the buttons above.';
+    const broken = images.filter(i => i.broken).length;
+    let s = `<span class="ok">${n} image${n===1?'':'s'}</span>`;
+    if(broken) s += ` · <span class="warn">${broken} can't be shown</span>`;
+    return s;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Thumbnail grid rendering
+  // ---------------------------------------------------------------------------
+  function renderGrid(){
+    grid.innerHTML = '';
+    empty.style.display = images.length ? 'none' : 'block';
+    playBtn.disabled = !images.some(i => !i.broken);
+
+    images.forEach((im, idx) => {
+      const tile = document.createElement('div');
+      tile.className = 'tile';
+      tile.draggable = true;
+      tile.dataset.id = im.id;
+
+      const img = document.createElement('img');
+      img.className = 'thumb';
+      img.src = im.url;
+      img.loading = 'lazy';
+      img.decoding = 'async';
+      img.alt = im.name;
+      img.draggable = false;
+      img.onerror = () => { im.broken = true; markBroken(tile, im); };
+      img.onload = () => { if(im.broken){ im.broken = false; unmarkBroken(tile, im); } };
+
+      const num = document.createElement('span');
+      num.className = 'num'; num.textContent = idx + 1;
+
+      const name = document.createElement('span');
+      name.className = 'name'; name.textContent = im.name; name.title = im.name;
+
+      const rm = document.createElement('button');
+      rm.className = 'rm'; rm.textContent = '✕'; rm.title = 'Remove';
+      rm.addEventListener('click', (e) => { e.stopPropagation(); removeImage(im.id); renderGrid(); setStatus(defaultStatus()); });
+
+      tile.append(img, num, name, rm);
+      if(im.broken) markBroken(tile, im);
+
+      // double-click -> start show here (pass the image id, not the index)
+      tile.addEventListener('dblclick', () => startShow(im.id));
+
+      // reorder drag
+      tile.addEventListener('dragstart', (e) => {
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', String(im.id));
+        internalDragId = im.id;
+        tile.classList.add('dragging');
+      });
+      tile.addEventListener('dragend', () => {
+        tile.classList.remove('dragging');
+        internalDragId = null;
+        clearDropMarkers();
+      });
+      tile.addEventListener('dragover', (e) => {
+        if(internalDragId == null) return;
+        e.preventDefault();
+        const r = tile.getBoundingClientRect();
+        const before = (e.clientX - r.left) < r.width/2;
+        tile.classList.toggle('drop-before', before);
+        tile.classList.toggle('drop-after', !before);
+      });
+      tile.addEventListener('dragleave', () => tile.classList.remove('drop-before','drop-after'));
+      tile.addEventListener('drop', (e) => {
+        if(internalDragId == null) return;
+        e.preventDefault(); e.stopPropagation();
+        const r = tile.getBoundingClientRect();
+        const before = (e.clientX - r.left) < r.width/2;
+        const dragId = internalDragId;
+        const targetId = Number(tile.dataset.id);
+        if(dragId !== targetId) reorder(dragId, targetId, before);
+        internalDragId = null;
+        clearDropMarkers();
+      });
+
+      grid.appendChild(tile);
+    });
+  }
+
+  function markBroken(tile, im){
+    tile.classList.add('broken');
+    const note = document.createElement('div');
+    note.className = 'broken-note';
+    note.textContent = "can't display in this browser (try Safari)";
+    tile.appendChild(note);
+  }
+  function unmarkBroken(tile, im){
+    tile.classList.remove('broken');
+    const note = tile.querySelector('.broken-note');
+    if(note) note.remove();
+  }
+
+  function clearDropMarkers(){
+    grid.querySelectorAll('.drop-before,.drop-after').forEach(t => t.classList.remove('drop-before','drop-after'));
+  }
+
+  function reorder(dragId, targetId, before){
+    const from = images.findIndex(x => x.id === dragId);
+    const to = images.findIndex(x => x.id === targetId);
+    if(from < 0 || to < 0) return;
+    const [moved] = images.splice(from,1);
+    let insertAt = images.findIndex(x => x.id === targetId);
+    if(!before) insertAt += 1;
+    images.splice(insertAt, 0, moved);
+    renderGrid();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Sorting
+  // ---------------------------------------------------------------------------
+  function applySort(mode){
+    if(mode === 'name'){
+      images.sort((a,b) => natural(a.path, b.path));
+    } else if(mode === 'date'){
+      images.sort((a,b) => a.file.lastModified - b.file.lastModified);
+    } else if(mode === 'shuffle'){
+      for(let i = images.length-1; i > 0; i--){
+        const j = Math.floor(Math.random()*(i+1));
+        [images[i], images[j]] = [images[j], images[i]];
+      }
+    } else if(mode === 'reverse'){
+      images.reverse();
+    }
+    renderGrid();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Adding files (buttons + drag/drop)
+  // ---------------------------------------------------------------------------
+  function addFiles(items){
+    let added = 0, skipped = 0, dup = 0;
+    for(const it of items){
+      const file = it.file, path = it.path;
+      if(!isImageFile(file)){ skipped++; continue; }
+      if(seen.has(keyOf(file))){ dup++; continue; }
+      if(addFile(file, path)) added++;
+    }
+    renderGrid();
+    const parts = [];
+    if(added) parts.push(`<span class="ok">+${added} added</span>`);
+    if(dup) parts.push(`${dup} duplicate${dup===1?'':'s'} skipped`);
+    if(skipped) parts.push(`${skipped} non-image${skipped===1?'':'s'} skipped`);
+    setStatus(parts.length ? parts.join(' · ') : defaultStatus());
+  }
+
+  // Recursively read a directory entry; readEntries() may return in batches,
+  // so loop until it yields an empty batch. Await every file and subdirectory.
+  async function readDir(entry){
+    const out = [];
+    const reader = entry.createReader();
+    for(;;){
+      let entries;
+      try{ entries = await new Promise((res, rej) => reader.readEntries(res, rej)); }
+      catch(e){ break; }
+      if(!entries || entries.length === 0) break;
+      const jobs = [];
+      for(const e of entries){
+        if(e.isFile){
+          jobs.push((async () => {
+            try{
+              const f = await new Promise((res, rej) => e.file(res, rej));
+              if(f) out.push({ file:f, path:entry.fullPath.replace(/^\//,'') + '/' + f.name });
+            }catch(err){ /* unreadable entry */ }
+          })());
+        } else if(e.isDirectory){
+          jobs.push((async () => {
+            const sub = await readDir(e);
+            out.push(...sub);
+          })());
+        }
+      }
+      await Promise.all(jobs);
+    }
+    return out;
+  }
+
+  // Collect every file from a drop (files + folders), then add in natural order.
+  async function handleDrop(e){
+    const items = e.dataTransfer.items;
+    const collected = [];
+    // Synchronously snapshot every item before any await (the browser empties
+    // the list as soon as the handler yields).
+    for(const item of items){
+      if(item.kind !== 'file') continue;
+      const entry = item.webkitGetAsEntry && item.webkitGetAsEntry();
+      if(entry){
+        if(entry.isFile){
+          collected.push((async () => {
+            try{
+              const f = await new Promise((res, rej) => entry.file(res, rej));
+              if(f) return { file:f, path:entry.fullPath.replace(/^\//,'') };
+            }catch(err){}
+            return null;
+          })());
+        } else if(entry.isDirectory){
+          collected.push(readDir(entry));
+        }
+      } else {
+        const f = item.getAsFile && item.getAsFile();
+        if(f) collected.push({ file:f, path:f.webkitRelativePath || f.name });
+      }
+    }
+    const files = [];
+    for(const c of collected){
+      const r = await c;
+      if(Array.isArray(r)) files.push(...r);
+      else if(r) files.push(r);
+    }
+    files.sort((a,b) => natural(a.path, b.path));
+    addFiles(files);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Window-level drag & drop (files only)
+  // ---------------------------------------------------------------------------
+  let dragDepth = 0;
+  let internalDragId = null;   // set while a tile reorder drag is in progress
+  window.addEventListener('dragenter', (e) => {
+    if(internalDragId != null) return;
+    if(!hasFiles(e)) return;
+    dragDepth++;
+    dropOverlay.classList.add('show');
+    document.body.classList.add('dragging');
+  });
+  window.addEventListener('dragover', (e) => {
+    if(internalDragId != null) return;
+    if(hasFiles(e)) e.preventDefault();
+  });
+  window.addEventListener('dragleave', (e) => {
+    if(internalDragId != null) return;
+    if(!hasFiles(e)) return;
+    dragDepth = Math.max(0, dragDepth-1);
+    if(dragDepth === 0){ dropOverlay.classList.remove('show'); document.body.classList.remove('dragging'); }
+  });
+  window.addEventListener('drop', (e) => {
+    if(internalDragId != null) return;
+    if(!hasFiles(e)) return;
+    e.preventDefault();
+    dragDepth = 0;
+    dropOverlay.classList.remove('show');
+    document.body.classList.remove('dragging');
+    handleDrop(e);
+  });
+  const hasFiles = (e) => e.dataTransfer && Array.prototype.includes.call(e.dataTransfer.types, 'Files');
+
+  // ---------------------------------------------------------------------------
+  // Settings wiring
+  // ---------------------------------------------------------------------------
+  function bindPair(rangeEl, numEl, key, min, max){
+    const apply = (v) => {
+      v = Math.min(max, Math.max(min, v));
+      settings[key] = v;
+      rangeEl.value = v; numEl.value = v;
+      saveSettings();
+    };
+    rangeEl.addEventListener('input', () => apply(parseFloat(rangeEl.value)));
+    numEl.addEventListener('change', () => apply(parseFloat(numEl.value)));
+  }
+
+  function initSettings(){
+    loadSettings();
+    $('#durRange').value = settings.duration; $('#durNum').value = settings.duration;
+    $('#tdurRange').value = settings.tdur; $('#tdurNum').value = settings.tdur;
+    $('#transSel').value = settings.transition;
+    $('#fitSel').value = settings.fit;
+    $('#loopChk').checked = settings.loop;
+    $('#capChk').checked = settings.caption;
+
+    bindPair($('#durRange'), $('#durNum'), 'duration', 1, 60);
+    bindPair($('#tdurRange'), $('#tdurNum'), 'tdur', 0.2, 5);
+    $('#transSel').addEventListener('change', (e) => { settings.transition = e.target.value; saveSettings(); });
+    $('#fitSel').addEventListener('change', (e) => { settings.fit = e.target.value; saveSettings(); });
+    $('#loopChk').addEventListener('change', (e) => { settings.loop = e.target.checked; saveSettings(); });
+    $('#capChk').addEventListener('change', (e) => { settings.caption = e.target.checked; saveSettings(); });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Playback
+  // ---------------------------------------------------------------------------
+  const show = {
+    active:false, paused:false, ended:false,
+    index:0, front:layerA, back:layerB,
+    timer:null, hudTimer:null,
+    running:[], kb:null,
+    token:0, pending:null,
+  };
+
+  const showable = () => images.filter(i => !i.broken);
+
+  function cancelRunning(){
+    for(const a of show.running){ try{ a.cancel(); }catch(e){} }
+    show.running = [];
+  }
+  function finishRunning(){
+    if(show.pending){
+      const p = show.pending;
+      show.pending = null;
+      p();
+    }
+  }
+  function stopKB(){
+    if(show.kb){ try{ show.kb.cancel(); }catch(e){} show.kb = null; }
+  }
+
+  function setFit(){
+    const cover = settings.fit === 'cover';
+    layerA.classList.toggle('cover', cover);
+    layerB.classList.toggle('cover', cover);
+  }
+
+  function startShow(startId){
+    const list = showable();
+    if(!list.length) return;
+    // startId is an image id (or 0 for the play button); map to a list index.
+    let idx = 0;
+    if(startId){
+      const found = list.findIndex(i => i.id === startId);
+      if(found >= 0) idx = found;
+    }
+    show.active = true; show.paused = false; show.ended = false;
+    show.index = Math.max(0, Math.min(idx, list.length-1));
+    setFit();
+    stage.classList.add('show');
+    updateCaption();
+    updateHUD();
+    // show first image immediately (no transition), through the decode path
+    const im = list[show.index];
+    show.front.src = im.url;
+    show.front.style.opacity = '1';
+    show.back.style.opacity = '0';
+    show.front.style.transform = 'none';
+    show.back.style.transform = 'none';
+    if(settings.transition === 'kenburns') startKenBurns();
+    requestFullscreen();
+    scheduleNext();
+  }
+
+  function stopShow(){
+    show.active = false; show.paused = false; show.ended = false;
+    clearTimeout(show.timer); show.timer = null;
+    clearTimeout(show.hudTimer); show.hudTimer = null;
+    show.token++;
+    show.pending = null;
+    cancelRunning(); stopKB();
+    stage.classList.remove('show');
+    exitFullscreen();
+    stage.classList.remove('hide-cursor');
+  }
+
+  function goTo(idx, dir){
+    const list = showable();
+    if(!list.length) return;
+    if(show.ended){ show.ended = false; }
+    show.index = ((idx % list.length) + list.length) % list.length;
+    transition(dir || 1);
+  }
+  function next(){
+    const list = showable();
+    if(show.ended) return;
+    if(show.index >= list.length-1){
+      if(settings.loop) goTo(0, 1);
+      else { show.ended = true; updateHUD(); }
+      return;
+    }
+    goTo(show.index+1, 1);
+  }
+  function prev(){
+    const list = showable();
+    if(show.ended){ show.ended = false; goTo(list.length-1, -1); return; }
+    goTo(show.index-1, -1);
+  }
+
+  function togglePause(){
+    if(!show.active) return;
+    show.paused = !show.paused;
+    if(show.paused){
+      clearTimeout(show.timer); show.timer = null;
+      if(show.kb) show.kb.pause();
+    } else {
+      if(show.kb) show.kb.play();
+      scheduleNext();
+    }
+    updateHUD();
+  }
+
+  function scheduleNext(){
+    clearTimeout(show.timer); show.timer = null;
+    if(show.paused || show.ended) return;
+    show.timer = setTimeout(next, settings.duration * 1000);
+  }
+
+  // ---- transitions (Web Animations API) ----
+  function transition(dir){
+    const list = showable();
+    if(!list.length) return;
+    const im = list[show.index];
+    const front = show.front, back = show.back;
+    const dur = Math.max(0.05, settings.tdur) * 1000;
+
+    // resolve the concrete transition (Random picks one)
+    let t = settings.transition;
+    if(t === 'random') t = ['crossfade','slide','zoom'][Math.floor(Math.random()*3)];
+
+    // finish any in-flight transition (synchronously), then load the next image
+    finishRunning();
+    // clear the pending advance timer so it can't fire mid-transition
+    clearTimeout(show.timer); show.timer = null;
+    // bump the token so any stale async run/completion is ignored
+    const token = ++show.token;
+
+    // incoming layer on top so the crossfade never dips to black
+    back.style.zIndex = '2';
+    front.style.zIndex = '1';
+    back.style.opacity = '0';
+    back.style.transform = 'none';
+    back.src = im.url;
+
+    const run = () => {
+      if(token !== show.token) return;   // stale run
+      front.style.opacity = '1';
+      front.style.transform = 'none';
+      const anims = [];
+
+      if(t === 'cut'){
+        // instant swap
+        front.style.opacity = '1';
+        back.style.opacity = '0';
+      } else if(t === 'crossfade'){
+        anims.push(back.animate([{opacity:0},{opacity:1}], {duration:dur, easing:'ease', fill:'forwards'}));
+      } else if(t === 'slide'){
+        const from = dir >= 0 ? '100%' : '-100%';
+        const toOut = dir >= 0 ? '-100%' : '100%';
+        anims.push(back.animate([{transform:`translateX(${from})`, opacity:1},{transform:'translateX(0)', opacity:1}], {duration:dur, easing:'ease', fill:'forwards'}));
+        anims.push(front.animate([{transform:'translateX(0)', opacity:1},{transform:`translateX(${toOut})`, opacity:1}], {duration:dur, easing:'ease', fill:'forwards'}));
+      } else if(t === 'zoom'){
+        anims.push(back.animate([{transform:'scale(1.15)', opacity:0},{transform:'scale(1)', opacity:1}], {duration:dur, easing:'ease', fill:'forwards'}));
+      } else if(t === 'kenburns'){
+        anims.push(back.animate([{opacity:0},{opacity:1}], {duration:dur, easing:'ease', fill:'forwards'}));
+      }
+
+      show.running = anims;
+
+      // completion: commit final inline styles, cancel animations, swap layers
+      let doneRan = false;
+      const done = () => {
+        if(doneRan) return;
+        doneRan = true;
+        if(token !== show.token) return;   // stale completion
+        // commit final inline state first
+        back.style.opacity = '1';
+        back.style.transform = 'none';
+        front.style.opacity = '0';
+        front.style.transform = 'none';
+        // cancel every animation of this transition (clears fill:'forwards')
+        for(const a of anims){ try{ a.cancel(); }catch(e){} }
+        show.running = [];
+        // cancel the outgoing layer's Ken Burns animation (if any)
+        if(show.kb && show.kb.effect && show.kb.effect.target === front){
+          try{ show.kb.cancel(); }catch(e){}
+          show.kb = null;
+        }
+        // swap layers
+        show.front = back; show.back = front;
+        // start the incoming layer's Ken Burns animation (only for Ken Burns)
+        if(t === 'kenburns') startKenBurns();
+        updateCaption();
+        updateHUD();
+        scheduleNext();
+      };
+
+      if(anims.length){
+        const last = anims[anims.length-1];
+        last.onfinish = done;
+        show.pending = done;   // so finishRunning() can complete it synchronously
+      } else {
+        done();
+      }
+    };
+
+    // decode first so we never show a half-loaded image
+    if(back.decode){
+      back.decode().then(() => {
+        if(token !== show.token) return;
+        run();
+      }).catch(() => {
+        if(token !== show.token) return;
+        // undecodable: mark broken, re-render, advance to the next showable image
+        im.broken = true;
+        renderGrid();
+        const l2 = showable();
+        if(!l2.length){ stopShow(); return; }
+        show.index = Math.min(show.index, l2.length-1);
+        transition(dir);
+      });
+    } else {
+      run();
+    }
+  }
+
+  function startKenBurns(){
+    stopKB();
+    const el = show.front;
+    const total = (settings.duration + settings.tdur) * 1000;
+    const dx = (Math.random()*6 - 3);   // ±3%
+    const dy = (Math.random()*6 - 3);
+    const anim = el.animate(
+      [
+        { transform:'scale(1) translate(0%,0%)' },
+        { transform:`scale(1.12) translate(${dx}%,${dy}%)` }
+      ],
+      { duration: total, easing:'linear', fill:'forwards' }
+    );
+    show.kb = anim;
+    if(show.paused) anim.pause();
+  }
+
+  // ---- fullscreen ----
+  function requestFullscreen(){
+    const el = stage;
+    const req = el.requestFullscreen || el.webkitRequestFullscreen;
+    if(req){ try{ const p = req.call(el); if(p && p.catch) p.catch(()=>{}); }catch(e){} }
+  }
+  function exitFullscreen(){
+    const d = document;
+    const ex = d.exitFullscreen || d.webkitExitFullscreen;
+    if(ex && (d.fullscreenElement || d.webkitFullscreenElement)){ try{ ex.call(d); }catch(e){} }
+  }
+  function onFullscreenChange(){
+    const d = document;
+    const fs = d.fullscreenElement || d.webkitFullscreenElement;
+    if(!fs && show.active) stopShow();
+  }
+  document.addEventListener('fullscreenchange', onFullscreenChange);
+  document.addEventListener('webkitfullscreenchange', onFullscreenChange);
+
+  // ---- HUD ----
+  function updateHUD(){
+    const list = showable();
+    hudPos.textContent = `${show.index+1} / ${list.length}`;
+    hudFn.textContent = list[show.index] ? list[show.index].name : '';
+    hudState.textContent = show.ended ? 'End' : (show.paused ? 'Paused' : '');
+  }
+  function updateCaption(){
+    if(settings.caption && show.active){
+      const list = showable();
+      caption.textContent = list[show.index] ? list[show.index].name : '';
+      caption.hidden = false;
+    } else {
+      caption.hidden = true;
+    }
+  }
+  function showHUD(){
+    hud.classList.add('show');
+    stage.classList.remove('hide-cursor');
+    clearTimeout(show.hudTimer);
+    show.hudTimer = setTimeout(() => {
+      hud.classList.remove('show');
+      if(show.active) stage.classList.add('hide-cursor');
+    }, 2000);
+  }
+
+  // ---- stage input ----
+  stage.addEventListener('click', (e) => {
+    if(e.target.closest('.hud')) return;
+    const r = stage.getBoundingClientRect();
+    if(e.clientX - r.left < r.width/2) prev(); else next();
+  });
+  stage.addEventListener('mousemove', () => { if(show.active) showHUD(); });
+
+  // ---- keyboard ----
+  window.addEventListener('keydown', (e) => {
+    if(!show.active) return;
+    switch(e.key){
+      case ' ': e.preventDefault(); togglePause(); showHUD(); break;
+      case 'ArrowRight': e.preventDefault(); next(); showHUD(); break;
+      case 'ArrowLeft': e.preventDefault(); prev(); showHUD(); break;
+      case 'Escape': e.preventDefault(); stopShow(); break;
+      case 'f': case 'F': toggleFullscreen(); showHUD(); break;
+      case 'h': case 'H': toggleHUD(); break;
+      default: showHUD();
+    }
+  });
+
+  function toggleFullscreen(){
+    const d = document;
+    const fs = d.fullscreenElement || d.webkitFullscreenElement;
+    if(fs) exitFullscreen(); else requestFullscreen();
+  }
+  function toggleHUD(){
+    if(hud.classList.contains('show')){
+      hud.classList.remove('show');
+      clearTimeout(show.hudTimer);
+      if(show.active) stage.classList.add('hide-cursor');
+    } else showHUD();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Button wiring
+  // ---------------------------------------------------------------------------
+  function wireButtons(){
+    const fileInput = $('#fileInput'), folderInput = $('#folderInput');
+    $('#addBtn').addEventListener('click', () => fileInput.click());
+    $('#addFolderBtn').addEventListener('click', () => folderInput.click());
+    fileInput.addEventListener('change', () => {
+      addFiles(Array.from(fileInput.files).map(f => ({ file:f, path:f.webkitRelativePath || f.name })));
+      fileInput.value='';
+    });
+    folderInput.addEventListener('change', () => {
+      addFiles(Array.from(folderInput.files).map(f => ({ file:f, path:f.webkitRelativePath || f.name })));
+      folderInput.value='';
+    });
+    $('#clearBtn').addEventListener('click', () => {
+      if(images.length && !confirm('Remove all images from the sequence?')) return;
+      clearAll(); renderGrid(); setStatus(defaultStatus());
+    });
+    document.querySelectorAll('[data-sort]').forEach(b =>
+      b.addEventListener('click', () => applySort(b.dataset.sort)));
+    playBtn.addEventListener('click', () => startShow(0));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Init
+  // ---------------------------------------------------------------------------
+  initSettings();
+  wireButtons();
+  renderGrid();
+})();
+</script>
+</body>
+</html>
