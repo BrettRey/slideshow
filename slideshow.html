@@ -1,7 +1,8 @@
 <!doctype html>
 <!-- Slideshow: a zero-footprint image slideshow. Images are held as in-memory
      object URLs pointing at the original files; nothing is copied or written.
-     Only the settings are remembered (localStorage). See README.md. -->
+     Only the settings and the order of file names are remembered (localStorage).
+     See README.md. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -73,6 +74,15 @@
     border-bottom:1px solid var(--line); min-height:1px;
   }
   .status .ok{color:var(--ok)} .status .warn{color:var(--danger)}
+
+  /* ---------- restore-order offer ---------- */
+  .restore{
+    display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+    padding:10px 18px; font-size:13.5px;
+    background:#0f1d25; border-bottom:1px solid var(--line);
+  }
+  .restore[hidden]{display:none}
+  .restore .btn{padding:6px 12px}
 
   /* ---------- grid ---------- */
   main{padding:18px}
@@ -254,13 +264,19 @@
 
   <div class="status" id="status">Drop images or folders anywhere, or use the buttons above.</div>
 
+  <div class="restore" id="restoreBar" hidden>
+    <span id="restoreMsg"></span>
+    <button class="btn" id="restoreBtn">Restore order</button>
+    <button class="btn" id="restoreDismiss">Dismiss</button>
+  </div>
+
   <main>
     <div class="grid" id="grid"></div>
     <div class="empty" id="empty">
       <div class="big">🖼️</div>
       <h2>No images yet</h2>
       <p>Drag a pile of images (or a whole folder) anywhere in this window to build your sequence.
-         Nothing is uploaded or copied; the app reads your original files in place, and only your settings are remembered.</p>
+         Nothing is uploaded or copied; the app reads your original files in place and remembers only your settings and the order of the file names.</p>
     </div>
   </main>
 
@@ -358,6 +374,8 @@
   const caption = $('#caption'), hud = $('#hud'), hudPos = $('#hudPos'), hudFn = $('#hudFn'), hudState = $('#hudState');
   const dropOverlay = $('#dropOverlay');
   const playBtn = $('#playBtn');
+  const restoreBar = $('#restoreBar'), restoreMsg = $('#restoreMsg');
+  const restoreBtn = $('#restoreBtn'), restoreDismiss = $('#restoreDismiss');
 
   // ---------------------------------------------------------------------------
   // Status line
@@ -377,6 +395,79 @@
     let s = `<span class="ok">${n} image${n===1?'':'s'}</span>`;
     if(broken) s += ` · <span class="warn">${broken} can't be shown</span>`;
     return s;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Remembered order (identity only, no file data)
+  // ---------------------------------------------------------------------------
+  const ORDER_KEY = 'slideshow.order.v1';
+  let pendingOrder = null;
+
+  function loadPendingOrder(){
+    try{
+      const raw = localStorage.getItem(ORDER_KEY);
+      if(raw){
+        const p = JSON.parse(raw);
+        if(Array.isArray(p) && p.length > 0) pendingOrder = p;
+      }
+    }catch(e){ /* storage blocked — no saved order */ }
+  }
+  function saveOrder(){
+    try{
+      localStorage.setItem(ORDER_KEY, JSON.stringify(images.map(im => keyOf(im.file))));
+    }catch(e){ /* ignore */ }
+  }
+
+  function updateRestoreOffer(){
+    if(pendingOrder === null){
+      restoreBar.hidden = true;
+      return;
+    }
+    const set = new Set(pendingOrder);
+    const matched = images.filter(im => set.has(keyOf(im.file)));
+    const matches = matched.length;
+    if(matches >= 2){
+      const matchedKeys = matched.map(im => keyOf(im.file));
+      const present = new Set(matchedKeys);   // compare only the files actually here
+      const savedMatched = pendingOrder.filter(k => present.has(k));
+      let sameOrder = matchedKeys.length === savedMatched.length;
+      if(sameOrder){
+        for(let i = 0; i < matchedKeys.length; i++){
+          if(matchedKeys[i] !== savedMatched[i]){ sameOrder = false; break; }
+        }
+      }
+      if(!sameOrder){
+        restoreMsg.textContent = `Restore the order from last time? ${matches} of ${pendingOrder.length} images found.`;
+        restoreBar.hidden = false;
+        return;
+      }
+    }
+    restoreBar.hidden = true;
+  }
+
+  function restoreOrder(){
+    if(pendingOrder === null) return;
+    const set = new Set(pendingOrder);
+    const matched = images.filter(im => set.has(keyOf(im.file)));
+    const unmatched = images.filter(im => !set.has(keyOf(im.file)));
+    const byKey = new Map(matched.map(im => [keyOf(im.file), im]));
+    const ordered = [];
+    for(const k of pendingOrder){
+      const im = byKey.get(k);
+      if(im) ordered.push(im);
+    }
+    images.length = 0;
+    images.push(...ordered, ...unmatched);
+    pendingOrder = null;
+    restoreBar.hidden = true;
+    renderGrid();
+    setStatus('Order restored');
+  }
+
+  function dismissRestore(){
+    pendingOrder = null;
+    restoreBar.hidden = true;
+    renderGrid();
   }
 
   // ---------------------------------------------------------------------------
@@ -411,7 +502,7 @@
 
       const rm = document.createElement('button');
       rm.className = 'rm'; rm.textContent = '✕'; rm.title = 'Remove';
-      rm.addEventListener('click', (e) => { e.stopPropagation(); removeImage(im.id); renderGrid(); setStatus(defaultStatus()); });
+      rm.addEventListener('click', (e) => { e.stopPropagation(); pendingOrder = null; restoreBar.hidden = true; removeImage(im.id); renderGrid(); setStatus(defaultStatus()); });
 
       tile.append(img, num, name, rm);
       if(im.broken) markBroken(tile, im);
@@ -454,6 +545,8 @@
 
       grid.appendChild(tile);
     });
+
+    if(pendingOrder === null) saveOrder();
   }
 
   function markBroken(tile, im){
@@ -481,6 +574,8 @@
     let insertAt = images.findIndex(x => x.id === targetId);
     if(!before) insertAt += 1;
     images.splice(insertAt, 0, moved);
+    pendingOrder = null;
+    restoreBar.hidden = true;
     renderGrid();
   }
 
@@ -500,6 +595,8 @@
     } else if(mode === 'reverse'){
       images.reverse();
     }
+    pendingOrder = null;
+    restoreBar.hidden = true;
     renderGrid();
   }
 
@@ -515,6 +612,7 @@
       if(addFile(file, path)) added++;
     }
     renderGrid();
+    updateRestoreOffer();
     const parts = [];
     if(added) parts.push(`<span class="ok">+${added} added</span>`);
     if(dup) parts.push(`${dup} duplicate${dup===1?'':'s'} skipped`);
@@ -1009,19 +1107,35 @@
     folderInput.addEventListener('change', () => { addFiles(fromPicker(folderInput)); folderInput.value=''; });
     $('#clearBtn').addEventListener('click', () => {
       if(images.length && !confirm('Remove all images from the sequence?')) return;
+      pendingOrder = null;
+      restoreBar.hidden = true;
       clearAll(); renderGrid(); setStatus(defaultStatus());
     });
     document.querySelectorAll('[data-sort]').forEach(b =>
       b.addEventListener('click', () => applySort(b.dataset.sort)));
     playBtn.addEventListener('click', () => startShow(0));
+    restoreBtn.addEventListener('click', restoreOrder);
+    restoreDismiss.addEventListener('click', dismissRestore);
   }
+
+  // ---------------------------------------------------------------------------
+  // Warn before leaving (only when there is an arrangement to lose)
+  // ---------------------------------------------------------------------------
+  window.addEventListener('beforeunload', (e) => {
+    if(images.length > 0){
+      e.preventDefault();
+      e.returnValue = '';
+    }
+  });
 
   // ---------------------------------------------------------------------------
   // Init
   // ---------------------------------------------------------------------------
+  loadPendingOrder();
   initSettings();
   wireButtons();
   renderGrid();
+  updateRestoreOffer();
 })();
 </script>
 </body>

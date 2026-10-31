@@ -1,6 +1,6 @@
 # Slideshow
 
-A slideshow for a pile of images that leaves nothing behind. Open `slideshow.html` in a browser, drop in images or folders, and play. The page reads your original files in place through in-memory references (`URL.createObjectURL`). It makes no copies, writes no files and sends nothing over the network, so when you close the tab the image list is gone. Only your settings are remembered between sessions, in the browser's local storage.
+A slideshow for a pile of images that leaves nothing behind. Open `slideshow.html` in a browser, drop in images or folders, and play. The page reads your original files in place through in-memory references (`URL.createObjectURL`). It makes no copies, writes no files and sends nothing over the network, so when you close the tab the images are gone from the page. Between sessions the browser's local storage keeps only your settings and the order of your file names.
 
 ## Opening it
 
@@ -23,6 +23,13 @@ That opens it in your default browser. You can also bookmark the page or drag th
 - **Name**, **Date** (file modification date, oldest first), **Shuffle** and **Reverse** reorder the whole list.
 - The ✕ that appears on hover removes a thumbnail.
 - Double-click a thumbnail to start the show from it.
+
+## Keeping an arrangement
+
+- While images are loaded, the browser asks before a reload or a closed tab.
+- The app remembers the order of the files you arranged (by name, size and modification date, not their contents). If the tab does close, add the same files again: a bar offers to restore the old order, and **Restore order** puts them back. Anything new goes at the end.
+- While that offer is open the old order stays saved, so a second accident doesn't lose it. **Dismiss**, or any rearranging of your own (drag, sort, remove, clear), replaces it with the current order.
+- Only one arrangement is remembered: the last one you made.
 
 ## Settings
 
@@ -50,11 +57,11 @@ The position bar appears when you move the mouse or press a key, and fades after
 ## Limits
 
 - **HEIC photos from an iPhone** display in Safari but not in Chrome. Chrome outlines them in red and the show skips them.
-- **The sequence lasts as long as the tab.** Keeping it across a reload would mean writing it somewhere, which is what the app exists to avoid. Chrome's File System Access API could reopen the same files with your permission; that isn't built.
+- **The images themselves have to be added again after a reload.** A web page can't reopen your files without you handing them over again. Chrome's File System Access API could do it with your permission; that isn't built.
 - **Very large batches.** Thumbnails are the original images scaled by the browser, so memory grows with how many are on screen. It has been tried with a handful of images, the largest a 52 MB PNG, not with hundreds.
 
 ## How it was built
 
-The code was written by qwen3.8:27b running locally through Ollama, in two rounds: a build from a written spec, then a repair against 16 defects found by reading the first version. Claude (Opus 5.5) then tested it in Chrome and fixed what was left. `dev/` holds both briefs and qwen's two versions, so `diff dev/qwen-v2.html slideshow.html` shows every line qwen didn't write. `DECISIONS.md` lists the fixes. Source: [github.com/BrettRey/slideshow](https://github.com/BrettRey/slideshow).
+The code was written by qwen3.8:27b running locally through Ollama, in three rounds: a build from a written spec, a repair against 16 defects found by reading the first version, and the arrangement-keeping features. Claude (Opus 5.5) reviewed and tested each round in Chrome, fixed what was left, and wrote the restore bar's HTML and CSS. `dev/` holds the three briefs and qwen's versions as returned, so `diff dev/qwen-v3.html slideshow.html` shows what changed after the last qwen round. `DECISIONS.md` lists the fixes. Source: [github.com/BrettRey/slideshow](https://github.com/BrettRey/slideshow).
 
 Testing was in Chrome with simulated input, because the browser automation couldn't send real keystrokes or mouse drags. Safari, real drag-and-drop from Finder and real fullscreen haven't been tried yet.
