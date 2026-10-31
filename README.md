@@ -55,6 +55,6 @@ The position bar appears when you move the mouse or press a key, and fades after
 
 ## How it was built
 
-The code was written by qwen3.8:27b running locally through Ollama, in two rounds: a build from a written spec, then a repair against 16 defects found by reading the first version. Claude (Opus 5.5) then tested it in Chrome and fixed what was left. `dev/` holds both briefs and qwen's two versions, so `diff dev/qwen-v2.html slideshow.html` shows every line qwen didn't write. `DECISIONS.md` lists the fixes.
+The code was written by qwen3.8:27b running locally through Ollama, in two rounds: a build from a written spec, then a repair against 16 defects found by reading the first version. Claude (Opus 5.5) then tested it in Chrome and fixed what was left. `dev/` holds both briefs and qwen's two versions, so `diff dev/qwen-v2.html slideshow.html` shows every line qwen didn't write. `DECISIONS.md` lists the fixes. Source: [github.com/BrettRey/slideshow](https://github.com/BrettRey/slideshow).
 
 Testing was in Chrome with simulated input, because the browser automation couldn't send real keystrokes or mouse drags. Safari, real drag-and-drop from Finder and real fullscreen haven't been tried yet.
