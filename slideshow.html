@@ -738,6 +738,8 @@
     show.token++;
     show.pending = null;
     cancelRunning(); stopKB();
+    // drop the old images so the next show can't flash this one's last frame
+    layerA.removeAttribute('src'); layerB.removeAttribute('src');
     stage.classList.remove('show');
     exitFullscreen();
     stage.classList.remove('hide-cursor');
