@@ -28,6 +28,7 @@ That opens it in your default browser. You can also bookmark the page or drag th
 
 - While images are loaded, the browser asks before a reload or a closed tab.
 - The app remembers the order of the files you arranged (by name, size and modification date, not their contents). If the tab does close, add the same files again: a bar offers to restore the old order, and **Restore order** puts them back. Anything new goes at the end.
+- Edited or re-exported photos still count if the file name is unchanged: a file that matches no saved file exactly is matched by name, as long as no other unmatched file on either side has that name. The bar says how many were matched that way. Two different files that share a name (`IMG_0001.jpg` from two cameras) are left unmatched rather than guessed. A renamed file can't be recognised.
 - While that offer is open the old order stays saved, so a second accident doesn't lose it. **Dismiss**, or any rearranging of your own (drag, sort, remove, clear), replaces it with the current order.
 - Only one arrangement is remembered: the last one you made.
 
@@ -62,6 +63,6 @@ The position bar appears when you move the mouse or press a key, and fades after
 
 ## How it was built
 
-The code was written by qwen3.8:27b running locally through Ollama, in three rounds: a build from a written spec, a repair against 16 defects found by reading the first version, and the arrangement-keeping features. Claude (Opus 5.5) reviewed and tested each round in Chrome, fixed what was left, and wrote the restore bar's HTML and CSS. `dev/` holds the three briefs and qwen's versions as returned, so `diff dev/qwen-v3.html slideshow.html` shows what changed after the last qwen round. `DECISIONS.md` lists the fixes. Source: [github.com/BrettRey/slideshow](https://github.com/BrettRey/slideshow).
+The code was written by qwen3.8:27b running locally through Ollama, in four rounds: a build from a written spec, a repair against 16 defects found by reading the first version, the arrangement-keeping features, and matching edited files by name. Claude (Opus 5.5) reviewed and tested each round in Chrome, fixed what was left, and wrote the restore bar's HTML and CSS. `dev/` holds the four briefs and qwen's versions as returned, so `diff dev/qwen-v4.html slideshow.html` shows what changed after the last qwen round. `DECISIONS.md` lists the fixes. Source: [github.com/BrettRey/slideshow](https://github.com/BrettRey/slideshow).
 
 Testing was in Chrome with simulated input, because the browser automation couldn't send real keystrokes or mouse drags. Safari, real drag-and-drop from Finder and real fullscreen haven't been tried yet.

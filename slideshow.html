@@ -418,26 +418,116 @@
     }catch(e){ /* ignore */ }
   }
 
+  function matchSaved(){
+    const savedKeys = pendingOrder;
+    const n = savedKeys.length;
+    const savedToImg = new Array(n).fill(null);
+    const imgToSaved = new Map();
+    let byName = 0;
+
+    // 1. Exact match first
+    for(let i = 0; i < images.length; i++){
+      const im = images[i];
+      const k = keyOf(im.file);
+      // Find the index in savedKeys
+      let idx = savedKeys.indexOf(k);
+      if(idx !== -1 && savedToImg[idx] === null){
+        savedToImg[idx] = im;
+        imgToSaved.set(im, idx);
+      }
+    }
+
+    // 2. Name match for remaining
+    // Identify unmatched images and unmatched saved slots
+    const unmatchedImgs = [];
+    for(let i = 0; i < images.length; i++){
+      if(!imgToSaved.has(images[i])){
+        unmatchedImgs.push(images[i]);
+      }
+    }
+
+    const unmatchedSlots = [];
+    for(let i = 0; i < n; i++){
+      if(savedToImg[i] === null){
+        unmatchedSlots.push(i);
+      }
+    }
+
+    // Group unmatched images by name
+    const imgByName = new Map();
+    for(const im of unmatchedImgs){
+      const name = im.name;
+      if(!imgByName.has(name)) imgByName.set(name, []);
+      imgByName.get(name).push(im);
+    }
+
+    // Group unmatched saved slots by name
+    // Extract name from key: key.split('|').slice(0, -2).join('|')
+    const slotByName = new Map();
+    for(const idx of unmatchedSlots){
+      const k = savedKeys[idx];
+      const parts = k.split('|');
+      const name = parts.slice(0, -2).join('|');
+      if(!slotByName.has(name)) slotByName.set(name, []);
+      slotByName.get(name).push(idx);
+    }
+
+    // Match only if name is unique in both sets
+    for(const [name, imgs] of imgByName){
+      if(imgs.length !== 1) continue;
+      const slots = slotByName.get(name);
+      if(!slots || slots.length !== 1) continue;
+      
+      const im = imgs[0];
+      const idx = slots[0];
+      
+      // Assign
+      savedToImg[idx] = im;
+      imgToSaved.set(im, idx);
+      byName++;
+    }
+
+    return { imgToSaved, byName };
+  }
+
   function updateRestoreOffer(){
     if(pendingOrder === null){
       restoreBar.hidden = true;
       return;
     }
-    const set = new Set(pendingOrder);
-    const matched = images.filter(im => set.has(keyOf(im.file)));
-    const matches = matched.length;
+    
+    const { imgToSaved, byName } = matchSaved();
+    const matches = imgToSaved.size;
+    
     if(matches >= 2){
-      const matchedKeys = matched.map(im => keyOf(im.file));
-      const present = new Set(matchedKeys);   // compare only the files actually here
-      const savedMatched = pendingOrder.filter(k => present.has(k));
-      let sameOrder = matchedKeys.length === savedMatched.length;
-      if(sameOrder){
-        for(let i = 0; i < matchedKeys.length; i++){
-          if(matchedKeys[i] !== savedMatched[i]){ sameOrder = false; break; }
+      // Check if current order of matched images is already increasing saved-index order
+      // Get matched images in their current sequence order
+      const matchedImgs = [];
+      for(const im of images){
+        if(imgToSaved.has(im)){
+          matchedImgs.push(im);
         }
       }
+      
+      // Get their saved indices in current order
+      const currentIndices = matchedImgs.map(im => imgToSaved.get(im));
+      
+      // Check if strictly increasing
+      let sameOrder = true;
+      for(let i = 1; i < currentIndices.length; i++){
+        if(currentIndices[i] <= currentIndices[i-1]){
+          sameOrder = false;
+          break;
+        }
+      }
+      
       if(!sameOrder){
-        restoreMsg.textContent = `Restore the order from last time? ${matches} of ${pendingOrder.length} images found.`;
+        let msg = `Restore the order from last time? ${matches} of ${pendingOrder.length} images found`;
+        if(byName > 0){
+          msg += ` (${byName} by name only, edited or re-exported)`;
+        }
+        msg += '.';
+        restoreMsg.textContent = msg;
         restoreBar.hidden = false;
         return;
       }
@@ -447,17 +537,28 @@
 
   function restoreOrder(){
     if(pendingOrder === null) return;
-    const set = new Set(pendingOrder);
-    const matched = images.filter(im => set.has(keyOf(im.file)));
-    const unmatched = images.filter(im => !set.has(keyOf(im.file)));
-    const byKey = new Map(matched.map(im => [keyOf(im.file), im]));
-    const ordered = [];
-    for(const k of pendingOrder){
-      const im = byKey.get(k);
-      if(im) ordered.push(im);
+    
+    const { imgToSaved } = matchSaved();
+    
+    const matched = [];
+    const unmatched = [];
+    
+    for(const im of images){
+      if(imgToSaved.has(im)){
+        matched.push(im);
+      } else {
+        unmatched.push(im);
+      }
     }
+    
+    // Sort matched by saved index
+    matched.sort((a, b) => imgToSaved.get(a) - imgToSaved.get(b));
+    
+    const ordered = [...matched, ...unmatched];
+    
     images.length = 0;
-    images.push(...ordered, ...unmatched);
+    images.push(...ordered);
+    
     pendingOrder = null;
     restoreBar.hidden = true;
     renderGrid();
